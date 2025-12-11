@@ -18,8 +18,8 @@ from homeassistant.const import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
-from OWNd.connection import OWNGateway, OWNEventSession
-from OWNd.discovery import find_gateways
+from .own_wrapper import OWNGateway, OWNEventSession
+from .own_wrapper import find_gateways
 
 from .const import (
     CONF_ADDRESS,
@@ -368,4 +368,5 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
+
 
