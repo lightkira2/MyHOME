@@ -191,6 +191,16 @@ class OWNSession:
         self._stream_reader = None
         self._stream_writer = None
 
+        # Se il logger non è stato passato, usiamo quello dell'integrazione
+        if self._logger is None:
+            self._logger = LOGGER
+
+        self._logger.warning(
+            "VENDORED OWNSession init: type=%s, gateway=%s",
+            self._type,
+            self._gateway.address if self._gateway else None,
+        )
+
     @property
     def gateway(self) -> OWNGateway:
         return self._gateway
@@ -198,14 +208,6 @@ class OWNSession:
     @gateway.setter
     def gateway(self, gateway: OWNGateway) -> None:
         self._gateway = gateway
-
-    # password is a property inside OWNGateway... right?
-    #@property
-    #def password(self) -> str:
-    #    return str(self._password)
-    #@password.setter
-    #def password(self, password: str) -> None:
-    #    self._password = password
 
     @property
     def logger(self) -> logging.Logger:
@@ -228,7 +230,7 @@ class OWNSession:
         connection = cls(gateway)
         return await connection.test_connection()
 
-        async def test_connection(self) -> dict:
+    async def test_connection(self) -> dict:
         retry_count = 0
         retry_timer = 1
 
@@ -398,7 +400,7 @@ class OWNSession:
                         hmac.new(key=key.encode(), digestmod=method).hexdigest()
                     )
                     # self._logger.debug("%s Generated Rb.", self._gateway.log_id)
-                    hashed_password = f"*#{client_random_string_rb}*{self._encode_hmac_password(method=method, password=self._gateway.password, nonce_a=server_random_string_ra, nonce_b=client_random_string_rb)}##"  # pylint: disable=line-too-long
+                    hashed_password = f"*#{client_random_string_rb}*{self._encode_hmac_password(method=method, password=self._gateway.password, nonce_a=server_random_string_ra, nonce_b=client_random_string_rb)}##"
                     self._logger.debug(
                         "%s Sending %s session password.",
                         self._gateway.log_id,
@@ -437,7 +439,8 @@ class OWNSession:
                                 self._stream_writer.write("*#*1##".encode())
                                 await self._stream_writer.drain()
                                 self._logger.debug(
-                                    "%s Session established successfully.", self._gateway.log_id
+                                    "%s Session established successfully.",
+                                    self._gateway.log_id,
                                 )
                             else:
                                 self._logger.error(
@@ -474,7 +477,7 @@ class OWNSession:
                 "%s Received nonce: `%s`", self._gateway.log_id, resulting_message
             )
             if self._gateway.password is not None:
-                hashed_password = f"*#{self._get_own_password(self._gateway.password, resulting_message.nonce)}##"  # pylint: disable=line-too-long
+                hashed_password = f"*#{self._get_own_password(self._gateway.password, resulting_message.nonce)}##"
                 self._logger.debug(
                     "%s Sending %s session password.", self._gateway.log_id, self._type
                 )
@@ -489,260 +492,3 @@ class OWNSession:
                     self._logger.error(
                         "%s Password error while opening %s session.",
                         self._gateway.log_id,
-                        self._type,
-                    )
-                elif resulting_message.is_ack():
-                    self._logger.debug(
-                        "%s %s session established successfully.",
-                        self._gateway.log_id,
-                        self._type.capitalize(),
-                    )
-            else:
-                error = True
-                error_message = "password_error"
-                self._logger.error(
-                    "%s Connection requires a password but none was provided for %s session.",
-                    self._gateway.log_id,
-                    self._type,
-                )
-        elif resulting_message.is_ack():
-            # self._logger.debug("%s Reply: `%s`", self._gateway.log_id, resulting_message)
-            self._logger.debug(
-                "%s %s session established successfully.",
-                self._gateway.log_id,
-                self._type.capitalize(),
-            )
-        else:
-            error = True
-            error_message = "negotiation_failed"
-            self._logger.debug(
-                "%s Unexpected message during negotiation: %s",
-                self._gateway.log_id,
-                resulting_message,
-            )
-
-        return {"Success": not error, "Message": error_message}
-
-    def _get_own_password(self, password, nonce, test=False):
-        start = True
-        num1 = 0
-        num2 = 0
-        password = int(password)
-        if test:
-            print("password: %08x" % (password))
-        for character in nonce:
-            if character != "0":
-                if start:
-                    num2 = password
-                start = False
-            if test:
-                print("c: %s num1: %08x num2: %08x" % (character, num1, num2))
-            if character == "1":
-                num1 = (num2 & 0xFFFFFF80) >> 7
-                num2 = num2 << 25
-            elif character == "2":
-                num1 = (num2 & 0xFFFFFFF0) >> 4
-                num2 = num2 << 28
-            elif character == "3":
-                num1 = (num2 & 0xFFFFFFF8) >> 3
-                num2 = num2 << 29
-            elif character == "4":
-                num1 = num2 << 1
-                num2 = num2 >> 31
-            elif character == "5":
-                num1 = num2 << 5
-                num2 = num2 >> 27
-            elif character == "6":
-                num1 = num2 << 12
-                num2 = num2 >> 20
-            elif character == "7":
-                num1 = (
-                    num2 & 0x0000FF00
-                    | ((num2 & 0x000000FF) << 24)
-                    | ((num2 & 0x00FF0000) >> 16)
-                )
-                num2 = (num2 & 0xFF000000) >> 8
-            elif character == "8":
-                num1 = (num2 & 0x0000FFFF) << 16 | (num2 >> 24)
-                num2 = (num2 & 0x00FF0000) >> 8
-            elif character == "9":
-                num1 = ~num2
-            else:
-                num1 = num2
-
-            num1 &= 0xFFFFFFFF
-            num2 &= 0xFFFFFFFF
-            if character not in "09":
-                num1 |= num2
-            if test:
-                print("     num1: %08x num2: %08x" % (num1, num2))
-            num2 = num1
-        return num1
-
-    def _encode_hmac_password(
-        self, method: str, password: str, nonce_a: str, nonce_b: str
-    ):
-        if method == "sha1":
-            message = (
-                self._int_string_to_hex_string(nonce_a)
-                + self._int_string_to_hex_string(nonce_b)
-                + "736F70653E"
-                + "636F70653E"
-                + hashlib.sha1(password.encode()).hexdigest()
-            )
-            return self._hex_string_to_int_string(
-                hashlib.sha1(message.encode()).hexdigest()
-            )
-        elif method == "sha256":
-            message = (
-                self._int_string_to_hex_string(nonce_a)
-                + self._int_string_to_hex_string(nonce_b)
-                + "736F70653E"
-                + "636F70653E"
-                + hashlib.sha256(password.encode()).hexdigest()
-            )
-            return self._hex_string_to_int_string(
-                hashlib.sha256(message.encode()).hexdigest()
-            )
-        else:
-            return None
-
-    def _decode_hmac_response(
-        self, method: str, password: str, nonce_a: str, nonce_b: str
-    ):
-        if method == "sha1":
-            message = (
-                self._int_string_to_hex_string(nonce_a)
-                + self._int_string_to_hex_string(nonce_b)
-                + hashlib.sha1(password.encode()).hexdigest()
-            )
-            return self._hex_string_to_int_string(
-                hashlib.sha1(message.encode()).hexdigest()
-            )
-        elif method == "sha256":
-            message = (
-                self._int_string_to_hex_string(nonce_a)
-                + self._int_string_to_hex_string(nonce_b)
-                + hashlib.sha256(password.encode()).hexdigest()
-            )
-            return self._hex_string_to_int_string(
-                hashlib.sha256(message.encode()).hexdigest()
-            )
-        else:
-            return None
-
-    def _int_string_to_hex_string(self, int_string: str) -> str:
-        hex_string = ""
-        for i in range(0, len(int_string), 2):
-            hex_string += f"{int(int_string[i:i+2]):x}"
-        return hex_string
-
-    def _hex_string_to_int_string(self, hex_string: str) -> str:
-        int_string = ""
-        for i in range(0, len(hex_string), 1):
-            int_string += f"{int(hex_string[i:i+1], 16):0>2d}"
-        return int_string
-
-
-class OWNEventSession(OWNSession):
-    def __init__(self, gateway: OWNGateway = None, logger: logging.Logger = None):
-        super().__init__(gateway=gateway, connection_type="event", logger=logger)
-
-    @classmethod
-    async def connect_to_gateway(cls, gateway: OWNGateway):
-        connection = cls(gateway)
-        await connection.connect()
-
-    async def get_next(self) -> Union[OWNMessage, str, None]:
-        """Acts as an entry point to read messages on the event bus.
-        It will read one frame and return it as an OWNMessage object"""
-        try:
-            data = await self._stream_reader.readuntil(OWNSession.SEPARATOR)
-            _decoded_data = data.decode()
-            _message = OWNMessage.parse(_decoded_data)
-            return _message if _message else _decoded_data
-        except asyncio.IncompleteReadError:
-            self._logger.warning(
-                "%s Connection interrupted, reconnecting...", self._gateway.log_id
-            )
-            await self.connect()
-            return None
-        except AttributeError:
-            self._logger.exception(
-                "%s Received data could not be parsed into a message:",
-                self._gateway.log_id,
-            )
-            return None
-        except ConnectionError:
-            self._logger.exception("%s Connection error:", self._gateway.log_id)
-            return None
-        except Exception:  # pylint: disable=broad-except
-            self._logger.exception("%s Event session crashed.", self._gateway.log_id)
-            return None
-
-
-class OWNCommandSession(OWNSession):
-    def __init__(self, gateway: OWNGateway = None, logger: logging.Logger = None):
-        super().__init__(gateway=gateway, connection_type="command", logger=logger)
-
-    @classmethod
-    async def send_to_gateway(cls, message: str, gateway: OWNGateway):
-        connection = cls(gateway)
-        await connection.connect()
-        await connection.send(message)
-
-    @classmethod
-    async def connect_to_gateway(cls, gateway: OWNGateway):
-        connection = cls(gateway)
-        await connection.connect()
-
-    async def send(self, message, is_status_request: bool = False, attempt: int = 1):
-        """Send the attached message on an existing 'command' connection,
-        actively reconnecting it if it had been reset."""
-
-        try:
-
-            self._stream_writer.write(str(message).encode())
-            await self._stream_writer.drain()
-            raw_response = await self._stream_reader.readuntil(OWNSession.SEPARATOR)
-            resulting_message = OWNMessage.parse(raw_response.decode())
-
-            while not isinstance(resulting_message, OWNSignaling):
-                self._logger.debug(
-                    "%s Message `%s` received response `%s`.",
-                    self._gateway.log_id,
-                    message,
-                    resulting_message,
-                )
-                raw_response = await self._stream_reader.readuntil(OWNSession.SEPARATOR)
-                resulting_message = OWNMessage.parse(raw_response.decode())
-
-            if resulting_message.is_nack():
-                if attempt <= 2:
-                    self._logger.error(
-                        "%s Could not send message `%s`. Retrying (%d)...", self._gateway.log_id, message,
-                        attempt
-                    )
-                    return await self.send(message, is_status_request, attempt + 1)
-                else:
-                    self._logger.error(
-                        "%s Could not send message `%s`. No more retries.", self._gateway.log_id, message
-                    )
-            elif resulting_message.is_ack():
-                log_message = "%s Message `%s` was successfully sent."
-                if not is_status_request:
-                    self._logger.info(log_message, self._gateway.log_id, message)
-                else:
-                    self._logger.debug(log_message, self._gateway.log_id, message)
-                    
-        except (ConnectionResetError, asyncio.IncompleteReadError):
-            self._logger.debug(
-                "%s Command session connection reset, retrying...", self._gateway.log_id
-            )
-            await self.connect()
-            await self.send(message=message, is_status_request=is_status_request)
-        except Exception:  # pylint: disable=broad-except
-            self._logger.exception("%s Command session crashed.", self._gateway.log_id)
-            return None
-
-
