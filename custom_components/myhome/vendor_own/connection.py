@@ -394,10 +394,14 @@ class OWNSession:
                     client_random_string_rb = self._hex_string_to_int_string(
                         hmac.new(key=key.encode(), digestmod=method).hexdigest()
                     )
-                    hashed_password = (
-                        f"*#{client_random_string_rb}*"
-                        f"{self._encode_hmac_password(method=method, password=self._gateway.password, "
-                        f"nonce_a=server_random_string_ra, nonce_b=client_random_string_rb)}##"
+                    hashed_password = "*#{}*{}##".format(
+                        client_random_string_rb,
+                        self._encode_hmac_password(
+                            method=method,
+                            password=self._gateway.password,
+                            nonce_a=server_random_string_ra,
+                            nonce_b=client_random_string_rb,
+                        ),
                     )
                     self._logger.debug(
                         "%s Sending %s session password.",
@@ -744,3 +748,4 @@ class OWNCommandSession(OWNSession):
         except Exception:  # pylint: disable=broad-except
             self._logger.exception("%s Command session crashed.", self._gateway.log_id)
             return None
+
