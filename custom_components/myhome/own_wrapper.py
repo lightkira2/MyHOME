@@ -47,15 +47,14 @@ from .vendor_own.message import (
     OWNCommand,
 )
 
-from .vendor_own.discovery import (
-    find_gateways
-)
+from .vendor_own.discovery import find_gateways
 
-# Se ti servono altre cose, puoi riesportarle qui:
-# from .vendor_own.message import OWNMessage, OWNLightingEvent, ...
+from .const import LOGGER
 
 # Esportiamo anche __version__ se definita
 try:
     from .vendor_own import __version__ as VERSION  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover
     VERSION = "vendored"
+
+LOGGER.warning("OWNd via own_wrapper, version=%s", VERSION)
