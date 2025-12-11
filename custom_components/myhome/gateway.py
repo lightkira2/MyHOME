@@ -45,8 +45,6 @@ from .own_wrapper import (
     OWNGatewayCommand,
     OWNCommand,
 )
-import OWNd
-import inspect
 
 
 from .const import (
