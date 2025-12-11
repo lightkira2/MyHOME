@@ -5,9 +5,17 @@ import re
 from typing import Dict, Optional
 
 import async_timeout
-from voluptuous import Schema, Required, Coerce, All, Range
+from voluptuous import Schema, Required, Coerce, All, Range, In
 from homeassistant.config_entries import ConfigFlow, OptionsFlow, CONN_CLASS_LOCAL_PUSH
-from homeassistant.const import CONF_FRIENDLY_NAME, CONF_HOST, CONF_ID, CONF_MAC, CONF_NAME, CONF_PASSWORD, CONF_PORT
+from homeassistant.const import (
+    CONF_FRIENDLY_NAME,
+    CONF_HOST,
+    CONF_ID,
+    CONF_MAC,
+    CONF_NAME,
+    CONF_PASSWORD,
+    CONF_PORT,
+)
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from OWNd.connection import OWNGateway, OWNSession
@@ -65,63 +73,143 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """User initiated flow (manual or discovered gateways)."""
+
+        # Se l'utente ha già scelto qualcosa dalla select
+        if user_input is not None:
+            serial = user_input["serial"]
+
+            # Scelta "Custom"
+            if serial == "00:00:00:00:00:00":
+                return await self.async_step_custom()
+
+            # Gateway scoperto
+            if self.discovered_gateways and serial in self.discovered_gateways:
+                self.gateway_handler = await OWNGateway.build_from_discovery_info(
+                    self.discovered_gateways[serial]
+                )
+                await self.async_set_unique_id(
+                    dr.format_mac(self.gateway_handler.serial),
+                    raise_on_progress=False,
+                )
+                # Chiediamo subito la password
+                return await self.async_step_password()
+
+        # Primo passaggio: discovery dei gateway
         try:
             with async_timeout.timeout(5):
                 local_gateways = await find_gateways()
         except asyncio.TimeoutError:
             return self.async_abort(reason="discovery_timeout")
 
+        # Se vuoi, qui puoi filtrare quelli già configurati:
         already_configured = self._async_current_ids(False)
+        # Esempio (lasciato commentato):
+        # local_gateways = [
+        #     gw for gw in local_gateways
+        #     if dr.format_mac(gw["serialNumber"]) not in already_configured
+        # ]
+
         self.discovered_gateways = {gw["serialNumber"]: gw for gw in local_gateways}
 
         # Mostra scelta gateway o Custom
         options = {
-            **{gw["serialNumber"]: f"{gw['modelName']} Gateway ({gw['address']})" for gw in local_gateways},
+            **{
+                gw["serialNumber"]: f"{gw['modelName']} Gateway ({gw['address']})"
+                for gw in local_gateways
+            },
             "00:00:00:00:00:00": "Custom",
         }
 
         return self.async_show_form(
             step_id="user",
-            data_schema=Schema({Required("serial"): options})
+            data_schema=Schema({Required("serial"): In(options)}),
         )
 
-    async def async_step_custom(self, user_input=None, errors={}):
+    async def async_step_custom(self, user_input=None, errors=None):
         """Manual gateway setup."""
+        if errors is None:
+            errors = {}
+
         if user_input is not None:
+            # Validazione IP
             try:
                 user_input["address"] = str(ipaddress.IPv4Address(user_input["address"]))
             except ipaddress.AddressValueError:
                 errors["address"] = "invalid_ip"
 
+            # Validazione MAC
             try:
-                user_input["serialNumber"] = dr.format_mac(f"{MACAddress(user_input['serialNumber'])}")
+                user_input["serialNumber"] = dr.format_mac(
+                    f"{MACAddress(user_input['serialNumber'])}"
+                )
             except ValueError:
                 errors["serialNumber"] = "invalid_mac"
 
             if not errors:
+                # Estraggo la password
+                password = str(user_input[CONF_OWN_PASSWORD])
+
+                # Valori di default per i campi "SSDP-like"
+                user_input.setdefault("ssdp_location", None)
+                user_input.setdefault("ssdp_st", None)
+                user_input.setdefault("deviceType", None)
+                user_input.setdefault("friendlyName", None)
+                user_input.setdefault("manufacturer", "BTicino S.p.A.")
+                user_input.setdefault("manufacturerURL", "http://www.bticino.it")
+                user_input.setdefault("modelNumber", None)
+                user_input.setdefault("UDN", None)
+
+                # Creo la gateway
                 self.gateway_handler = OWNGateway(user_input)
-                return await self.async_step_password()
+                self.gateway_handler.password = password
+
+                await self.async_set_unique_id(
+                    user_input["serialNumber"], raise_on_progress=False
+                )
+
+                # Provo subito il test di connessione
+                return await self.async_step_test_connection()
 
         # Suggerimenti per i campi
         address_suggestion = user_input.get("address") if user_input else "192.168.1.135"
         port_suggestion = user_input.get("port") if user_input else 20000
-        serial_suggestion = user_input.get("serialNumber") if user_input else "00:03:50:00:00:00"
+        serial_suggestion = (
+            user_input.get("serialNumber") if user_input else "00:03:50:00:00:00"
+        )
         model_suggestion = user_input.get("modelName") if user_input else "F454"
 
         return self.async_show_form(
             step_id="custom",
-            data_schema=Schema({
-                Required("address", description={"suggested_value": address_suggestion}): str,
-                Required("port", description={"suggested_value": port_suggestion}): int,
-                Required("serialNumber", description={"suggested_value": serial_suggestion}): str,
-                Required("modelName", description={"suggested_value": model_suggestion}): str,
-                Required(CONF_OWN_PASSWORD): str,  # Campo password richiesto subito
-            }),
+            data_schema=Schema(
+                {
+                    Required(
+                        "address",
+                        description={"suggested_value": address_suggestion},
+                    ): str,
+                    Required(
+                        "port",
+                        description={"suggested_value": port_suggestion},
+                    ): int,
+                    Required(
+                        "serialNumber",
+                        description={"suggested_value": serial_suggestion},
+                    ): str,
+                    Required(
+                        "modelName",
+                        description={"suggested_value": model_suggestion},
+                    ): str,
+                    # Password richiesta subito
+                    Required(CONF_OWN_PASSWORD): str,
+                }
+            ),
             errors=errors,
         )
 
-    async def async_step_password(self, user_input=None, errors={}):
+    async def async_step_password(self, user_input=None, errors=None):
         """Ask for password (or reentry)."""
+        if errors is None:
+            errors = {}
+
         if user_input is not None:
             self.gateway_handler.password = str(user_input[CONF_OWN_PASSWORD])
             return await self.async_step_test_connection()
@@ -129,9 +217,14 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
         suggested = getattr(self.gateway_handler, "password", "12345")
         return self.async_show_form(
             step_id="password",
-            data_schema=Schema({
-                Required(CONF_OWN_PASSWORD, description={"suggested_value": suggested}): str,
-            }),
+            data_schema=Schema(
+                {
+                    Required(
+                        CONF_OWN_PASSWORD,
+                        description={"suggested_value": suggested},
+                    ): str,
+                }
+            ),
             description_placeholders={
                 CONF_HOST: getattr(self.gateway_handler, "host", ""),
                 CONF_NAME: getattr(self.gateway_handler, "model_name", ""),
@@ -140,8 +233,11 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_test_connection(self, user_input=None, errors={}):
+    async def async_step_test_connection(self, user_input=None, errors=None):
         """Test connection using host, port, and password."""
+        if errors is None:
+            errors = {}
+
         gateway = self.gateway_handler
         assert gateway is not None
 
@@ -170,11 +266,12 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
                 data=_new_entry_data,
             )
 
-        # Password mancante o errata
+        # Password mancante o errata: rimando allo step password
         if test_result["Message"] in ["password_required", "password_error", "password_retry"]:
             errors["password"] = test_result["Message"]
             return await self.async_step_password(errors=errors)
 
+        # Altri errori: abort
         return self.async_abort(reason=test_result["Message"])
 
 
@@ -195,8 +292,9 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
     async def async_step_init(self, user_input=None):
         return await self.async_step_user()
 
-    async def async_step_user(self, user_input=None, errors={}):
-        errors = {}
+    async def async_step_user(self, user_input=None, errors=None):
+        errors = {} if errors is None else errors
+
         if user_input is not None:
             # aggiorna dati e options
             self.options.update({CONF_WORKER_COUNT: user_input[CONF_WORKER_COUNT]})
@@ -211,18 +309,39 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
                 errors[CONF_ADDRESS] = "invalid_ip"
 
             if not errors:
-                self.hass.config_entries.async_update_entry(self.config_entry, data=self.data)
-                await self.hass.config_entries.async_reload(self.config_entry.entry_id)
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=self.data
+                )
+                await self.hass.config_entries.async_reload(
+                    self.config_entry.entry_id
+                )
                 return self.async_create_entry(title="", data=self.options)
 
         return self.async_show_form(
             step_id="user",
-            data_schema=Schema({
-                Required(CONF_ADDRESS, description={"suggested_value": self.data[CONF_HOST]}): str,
-                Required(CONF_OWN_PASSWORD, description={"suggested_value": self.data[CONF_PASSWORD]}): str,
-                Required(CONF_FILE_PATH, description={"suggested_value": self.options[CONF_FILE_PATH]}): str,
-                Required(CONF_WORKER_COUNT, description={"suggested_value": self.options[CONF_WORKER_COUNT]}): All(Coerce(int), Range(min=1, max=10)),
-                Required(CONF_GENERATE_EVENTS, description={"suggested_value": self.options[CONF_GENERATE_EVENTS]}): bool,
-            }),
+            data_schema=Schema(
+                {
+                    Required(
+                        CONF_ADDRESS,
+                        description={"suggested_value": self.data[CONF_HOST]},
+                    ): str,
+                    Required(
+                        CONF_OWN_PASSWORD,
+                        description={"suggested_value": self.data[CONF_PASSWORD]},
+                    ): str,
+                    Required(
+                        CONF_FILE_PATH,
+                        description={"suggested_value": self.options[CONF_FILE_PATH]},
+                    ): str,
+                    Required(
+                        CONF_WORKER_COUNT,
+                        description={"suggested_value": self.options[CONF_WORKER_COUNT]},
+                    ): All(Coerce(int), Range(min=1, max=10)),
+                    Required(
+                        CONF_GENERATE_EVENTS,
+                        description={"suggested_value": self.options[CONF_GENERATE_EVENTS]},
+                    ): bool,
+                }
+            ),
             errors=errors,
         )
