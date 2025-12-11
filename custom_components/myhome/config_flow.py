@@ -236,7 +236,7 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_test_connection(self, user_input=None, errors=None):
+        async def async_step_test_connection(self, user_input=None, errors=None):
         """Test connection using host, port, and password."""
         if errors is None:
             errors = {}
@@ -244,33 +244,37 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
         gateway = self.gateway_handler
         assert gateway is not None
 
-        # DEBUG: dove sta OWNd nel config_flow
-        try:
-            LOGGER.warning(
-                "CONFIG_FLOW: OWNd loaded from: %s, version: %s",
-                inspect.getfile(OWNd),
-                getattr(OWNd, "__version__", "unknown"),
-            )
-        except Exception as e:
-            LOGGER.error("CONFIG_FLOW: Failed to inspect OWNd module: %s", e)
-
-        test_session = OWNSession(
-            gateway=gateway,
-            logger=LOGGER,
-            connection_type="command",
-        )
-        
         LOGGER.warning(
-            "CONFIG_FLOW: starting command test session to %s:%s (password set: %s)",
+            "CONFIG_FLOW: starting EVENT test session to %s:%s (password set: %s)",
             gateway.address,
             gateway.port,
-            bool(gateway.password),
+            gateway.password is not None,
         )
-        
-        test_result = await test_session.test_connection()
-        LOGGER.warning("CONFIG_FLOW: test result: %s", test_result)
-        
-        if test_result["Success"]:
+
+        # Usiamo OWNEventSession, esattamente come fa il CLI `python3 -m OWNd`
+        event_session = OWNEventSession(gateway=gateway, logger=LOGGER)
+
+        try:
+            result = await event_session.connect()
+            # connect() ritorna il dict di _negotiate oppure None
+            await event_session.close()
+        except Exception as exc:  # sicurezza extra
+            LOGGER.error(
+                "CONFIG_FLOW: unexpected exception during event test connection: %r",
+                exc,
+            )
+            return self.async_abort(reason="cannot_connect")
+
+        # Se OWNd non ha ritornato nulla, connessione fallita (timeout/reset multipli)
+        if result is None:
+            LOGGER.error(
+                "CONFIG_FLOW: event session connect() returned None (connection refused or reset)."
+            )
+            return self.async_abort(reason="cannot_connect")
+
+        LOGGER.warning("CONFIG_FLOW: event test result: %s", result)
+
+        if result["Success"]:
             _new_entry_data = {
                 CONF_ID: dr.format_mac(gateway.serial),
                 CONF_HOST: gateway.address,
@@ -292,13 +296,14 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
                 data=_new_entry_data,
             )
 
-        # Password mancante o errata: rimando allo step password
-        if test_result["Message"] in ["password_required", "password_error", "password_retry"]:
-            errors["password"] = test_result["Message"]
+        # Gestione errori password come prima, ma ora basata sull'event session
+        if result["Message"] in ["password_required", "password_error", "password_retry"]:
+            errors["password"] = result["Message"]
             return await self.async_step_password(errors=errors)
 
-        # Altri errori: abort
-        return self.async_abort(reason=test_result["Message"])
+        # Altri motivi (negotiation_failed, connection_refused, ecc.)
+        return self.async_abort(reason=result["Message"])
+
 
 
 class MyhomeOptionsFlowHandler(OptionsFlow):
@@ -371,6 +376,7 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
+
 
 
 
