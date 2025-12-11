@@ -226,7 +226,7 @@ class OWNSession:
         connection = cls(gateway)
         return await connection.test_connection()
 
-    async def test_connection(self) -> dict:
+        async def test_connection(self) -> dict:
         retry_count = 0
         retry_timer = 1
 
@@ -237,7 +237,7 @@ class OWNSession:
                         "%s Test session connection still refused after 3 attempts.",
                         self._gateway.log_id,
                     )
-                    return None
+                    return {"Success": False, "Message": "connection_refused"}
                 (
                     self._stream_reader,
                     self._stream_writer,
@@ -258,16 +258,14 @@ class OWNSession:
         try:
             result = await self._negotiate()
             await self.close()
-        except ConnectionResetError:
-            error = True
-            error_message = "password_retry"
+        except ConnectionResetError as exc:
             self._logger.error(
-                "%s Negotiation reset while opening %s session. Wait 60 seconds before retrying.",
+                "%s NEGOTIATE: ConnectionResetError in %s session: %r",
                 self._gateway.log_id,
                 self._type,
+                exc,
             )
-
-            return {"Success": not error, "Message": error_message}
+            return {"Success": False, "Message": "password_retry"}
 
         return result
 
@@ -744,3 +742,4 @@ class OWNCommandSession(OWNSession):
         except Exception:  # pylint: disable=broad-except
             self._logger.exception("%s Command session crashed.", self._gateway.log_id)
             return None
+
