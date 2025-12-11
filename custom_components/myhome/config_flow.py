@@ -254,7 +254,12 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
         except Exception as e:
             LOGGER.error("CONFIG_FLOW: Failed to inspect OWNd module: %s", e)
 
-        test_session = OWNSession(gateway=gateway, logger=LOGGER)
+        test_session = OWNSession(
+            gateway=self.gateway,
+            logger=LOGGER,
+            password=self.gateway.password,  # <-- PASS PASSWORD ESPRESSAMENTE
+            mac=self.gateway.serial
+        )
         test_result = await test_session.test_connection()
 
         if test_result["Success"]:
@@ -358,4 +363,5 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
+
 
