@@ -18,9 +18,8 @@ from homeassistant.const import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
-from .own_wrapper import OWNGateway, OWNEventSession
-from .own_wrapper import find_gateways
 
+from .own_wrapper import OWNGateway, OWNEventSession, find_gateways
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_TYPE,
@@ -37,7 +36,7 @@ from .const import (
     DOMAIN,
     LOGGER,
 )
-from .gateway import MyHOMEGatewayHandler
+from .gateway import MyHOMEGatewayHandler  # anche se ora non lo usiamo, ok
 
 
 class MACAddress:
@@ -96,13 +95,13 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
 
         # Primo passaggio: discovery dei gateway
         try:
-            with async_timeout.timeout(5):
+            async with async_timeout.timeout(5):
                 local_gateways = await find_gateways()
         except asyncio.TimeoutError:
             return self.async_abort(reason="discovery_timeout")
 
         already_configured = self._async_current_ids(False)
-        # Se vuoi, puoi filtrare i già configurati usando already_configured
+        # Volendo puoi filtrare qui i già configurati usando already_configured
 
         self.discovered_gateways = {gw["serialNumber"]: gw for gw in local_gateways}
 
@@ -154,7 +153,7 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
                 user_input.setdefault("modelNumber", None)
                 user_input.setdefault("UDN", None)
 
-                # Creo la gateway
+                # Creo la gateway vendored
                 self.gateway_handler = OWNGateway(user_input)
                 self.gateway_handler.password = password
 
@@ -243,7 +242,7 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             gateway.password is not None,
         )
 
-        # Usiamo OWNEventSession, come nel CLI
+        # Usiamo OWNEventSession vendored, come base per il test
         event_session = OWNEventSession(
             gateway=gateway,
             logger=LOGGER,
@@ -368,5 +367,3 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
-
-
