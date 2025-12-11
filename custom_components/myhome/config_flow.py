@@ -359,6 +359,12 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             CONF_UDN: gateway.udn,
             CONF_FIRMWARE: gateway.firmware,
         }
+
+        # rdr - listener restart request
+        LOGGER.info("rdr - requesting listener restart")
+        self.hass.bus.async_fire("myhome_force_restart_event_listener")
+
+        
         if gateway.port is not None:
             updatable[CONF_PORT] = gateway.port
 
@@ -447,3 +453,4 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
+
