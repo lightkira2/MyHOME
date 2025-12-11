@@ -45,6 +45,9 @@ from OWNd.message import (
     OWNGatewayCommand,
     OWNCommand,
 )
+import OWNd
+import inspect
+
 
 from .const import (
     CONF_PLATFORMS,
@@ -73,6 +76,17 @@ class MyHOMEGatewayHandler:
     """Manages a single MyHOME Gateway."""
 
     def __init__(self, hass, config_entry, generate_events=False):
+        # DEBUG: path e versione di OWNd usata da HA
+        try:
+            from .const import LOGGER  # se non già visibile qui
+            LOGGER.warning(
+                "OWNd loaded from: %s, version: %s",
+                inspect.getfile(OWNd),
+                getattr(OWNd, "__version__", "unknown"),
+            )
+        except Exception as e:
+            LOGGER.error("Failed to inspect OWNd module: %s", e)
+            
         build_info = {
             "address": config_entry.data[CONF_HOST],
             "port": config_entry.data[CONF_PORT],
