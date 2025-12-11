@@ -247,8 +247,6 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
         event_session = OWNEventSession(
             gateway=gateway,
             logger=LOGGER,
-            password=gateway.password,
-            mac=gateway.serial,
         )
 
         try:
@@ -370,3 +368,4 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
+
