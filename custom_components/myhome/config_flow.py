@@ -3,6 +3,9 @@ import asyncio
 import ipaddress
 import re
 from typing import Dict, Optional
+import OWNd
+import inspect
+
 
 import async_timeout
 from voluptuous import Schema, Required, Coerce, All, Range, In
@@ -241,6 +244,16 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
         gateway = self.gateway_handler
         assert gateway is not None
 
+        # DEBUG: dove sta OWNd nel config_flow
+        try:
+            LOGGER.warning(
+                "CONFIG_FLOW: OWNd loaded from: %s, version: %s",
+                inspect.getfile(OWNd),
+                getattr(OWNd, "__version__", "unknown"),
+            )
+        except Exception as e:
+            LOGGER.error("CONFIG_FLOW: Failed to inspect OWNd module: %s", e)
+
         test_session = OWNSession(gateway=gateway, logger=LOGGER)
         test_result = await test_session.test_connection()
 
@@ -345,3 +358,4 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
+
