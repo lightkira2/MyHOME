@@ -173,8 +173,6 @@ class MyHOMEGatewayHandler:
         _event_session = OWNEventSession(
             gateway=self.gateway,
             logger=LOGGER,
-            password=self.gateway.password,
-            mac=self.gateway.serial,
         )
         await _event_session.connect()
 
