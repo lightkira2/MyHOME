@@ -38,6 +38,17 @@ from .vendor_own.message import (
     MESSAGE_TYPE_SECONDARY_TEMPERATURE,
     OWNEnergyCommand,
     OWNEnergyEvent,
+    OWNMessage,
+    OWNAuxEvent,
+    OWNCENPlusEvent,
+    OWNCENEvent,
+    OWNGatewayEvent,
+    OWNGatewayCommand,
+    OWNCommand,
+)
+
+from OWNd.discovery import (
+    find_gateways
 )
 
 # Se ti servono altre cose, puoi riesportarle qui:
