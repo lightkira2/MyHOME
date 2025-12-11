@@ -3,9 +3,6 @@ import asyncio
 import ipaddress
 import re
 from typing import Dict, Optional
-import OWNd
-import inspect
-
 
 import async_timeout
 from voluptuous import Schema, Required, Coerce, All, Range, In
@@ -21,7 +18,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
-from OWNd.connection import OWNGateway, OWNSession
+from OWNd.connection import OWNGateway, OWNEventSession
 from OWNd.discovery import find_gateways
 
 from .const import (
@@ -104,13 +101,8 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
         except asyncio.TimeoutError:
             return self.async_abort(reason="discovery_timeout")
 
-        # Se vuoi, qui puoi filtrare quelli già configurati:
         already_configured = self._async_current_ids(False)
-        # Esempio (lasciato commentato):
-        # local_gateways = [
-        #     gw for gw in local_gateways
-        #     if dr.format_mac(gw["serialNumber"]) not in already_configured
-        # ]
+        # Se vuoi, puoi filtrare i già configurati usando already_configured
 
         self.discovered_gateways = {gw["serialNumber"]: gw for gw in local_gateways}
 
@@ -236,7 +228,7 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-        async def async_step_test_connection(self, user_input=None, errors=None):
+    async def async_step_test_connection(self, user_input=None, errors=None):
         """Test connection using host, port, and password."""
         if errors is None:
             errors = {}
@@ -251,21 +243,24 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             gateway.password is not None,
         )
 
-        # Usiamo OWNEventSession, esattamente come fa il CLI `python3 -m OWNd`
-        event_session = OWNEventSession(gateway=gateway, logger=LOGGER)
+        # Usiamo OWNEventSession, come nel CLI
+        event_session = OWNEventSession(
+            gateway=gateway,
+            logger=LOGGER,
+            password=gateway.password,
+            mac=gateway.serial,
+        )
 
         try:
             result = await event_session.connect()
-            # connect() ritorna il dict di _negotiate oppure None
             await event_session.close()
-        except Exception as exc:  # sicurezza extra
+        except Exception as exc:
             LOGGER.error(
                 "CONFIG_FLOW: unexpected exception during event test connection: %r",
                 exc,
             )
             return self.async_abort(reason="cannot_connect")
 
-        # Se OWNd non ha ritornato nulla, connessione fallita (timeout/reset multipli)
         if result is None:
             LOGGER.error(
                 "CONFIG_FLOW: event session connect() returned None (connection refused or reset)."
@@ -296,14 +291,13 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
                 data=_new_entry_data,
             )
 
-        # Gestione errori password come prima, ma ora basata sull'event session
+        # Errori legati alla password
         if result["Message"] in ["password_required", "password_error", "password_retry"]:
             errors["password"] = result["Message"]
             return await self.async_step_password(errors=errors)
 
         # Altri motivi (negotiation_failed, connection_refused, ecc.)
         return self.async_abort(reason=result["Message"])
-
 
 
 class MyhomeOptionsFlowHandler(OptionsFlow):
@@ -376,7 +370,3 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
-
-
-
-
