@@ -1,5 +1,7 @@
 """ This module handles TCP connections to the OpenWebNet gateway """
 
+from ..const import LOGGER
+
 import asyncio
 import hmac
 import hashlib
@@ -742,4 +744,5 @@ class OWNCommandSession(OWNSession):
         except Exception:  # pylint: disable=broad-except
             self._logger.exception("%s Command session crashed.", self._gateway.log_id)
             return None
+
 
