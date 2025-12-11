@@ -142,12 +142,14 @@ class MyHOMEGatewayHandler:
         return self.gateway.firmware
 
     async def test(self) -> Dict:
-        """Test connection to the gateway (command session)."""
         session = OWNSession(
             gateway=self.gateway,
             logger=LOGGER,
-            connection_type="command"
+            password=self.gateway.password,
+            mac=self.gateway.serial,
         )
+        return await session.test_connection()
+
 
         LOGGER.warning(
             "%s TEST: starting command test session to %s:%s (password set: %s)",
@@ -171,10 +173,11 @@ class MyHOMEGatewayHandler:
         _event_session = OWNEventSession(
             gateway=self.gateway,
             logger=LOGGER,
-            connection_type="command"
+            password=self.gateway.password,
+            mac=self.gateway.serial,
         )
-        
         await _event_session.connect()
+
         self.is_connected = True
 
         while not self._terminate_listener:
@@ -357,7 +360,7 @@ class MyHOMEGatewayHandler:
         _command_session = OWNCommandSession(
             gateway=self.gateway,
             logger=LOGGER,
-            password=self.gateway.password,  # <-- PASS PASSWORD ESPRESSAMENTE
+            password=self.gateway.password,
             mac=self.gateway.serial
         )
         await _command_session.connect()
