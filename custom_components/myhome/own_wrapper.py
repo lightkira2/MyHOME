@@ -47,7 +47,7 @@ from .vendor_own.message import (
     OWNCommand,
 )
 
-from OWNd.discovery import (
+from .vendor_own.discovery import (
     find_gateways
 )
 
