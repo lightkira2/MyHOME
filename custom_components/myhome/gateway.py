@@ -128,14 +128,20 @@ class MyHOMEGatewayHandler:
         return self.gateway.firmware
 
     async def test(self) -> Dict:
-        return await OWNSession(gateway=self.gateway, logger=LOGGER).test_connection()
+        session = OWNSession(
+            gateway=self.gateway,
+            logger=LOGGER,
+            mac=self.gateway.serial  # <-- FIX: passa il MAC al test
+        )
+        return await session.test_connection()
+
 
     async def listening_loop(self):
         self._terminate_listener = False
 
         LOGGER.debug("%s Creating listening worker.", self.log_id)
 
-        _event_session = OWNEventSession(gateway=self.gateway, logger=LOGGER)
+        _event_session = OWNEventSession(gateway=self.gateway, logger=LOGGER, mac=self.gateway.serial)
         await _event_session.connect()
         self.is_connected = True
 
@@ -372,7 +378,7 @@ class MyHOMEGatewayHandler:
             worker_id,
         )
 
-        _command_session = OWNCommandSession(gateway=self.gateway, logger=LOGGER)
+        _command_session = OWNCommandSession(gateway=self.gateway, logger=LOGGER, mac=self.gateway.serial)
         await _command_session.connect()
 
         while not self._terminate_sender:
