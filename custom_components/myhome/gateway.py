@@ -28,8 +28,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.components.climate import DOMAIN as CLIMATE
 
-from OWNd.connection import OWNSession, OWNEventSession, OWNCommandSession, OWNGateway
-from OWNd.message import (
+from .own_wrapper import OWNSession, OWNEventSession, OWNCommandSession, OWNGateway
+from .own_wrapper import (
     OWNMessage,
     OWNLightingEvent,
     OWNLightingCommand,
