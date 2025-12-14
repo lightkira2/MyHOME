@@ -182,17 +182,8 @@ class OWNSession:
 
         self._gateway = gateway
         self._type = connection_type.lower()
-        self._logger = logger
-
-        # Se il logger non è stato passato, usiamo quello dell'integrazione
-        if self._logger is None:
-            self._logger = LOGGER
-
-        self._logger.debug(
-            "VENDORED OWNSession init: type=%s, gateway=%s",
-            self._type,
-            self._gateway.address if self._gateway else None,
-        )
+        # usa il logger dell'integrazione se non passato
+        self._logger = logger or LOGGER
 
         # annotations for stream reader/writer:
         self._stream_reader: asyncio.StreamReader
@@ -200,6 +191,12 @@ class OWNSession:
         # init them to None:
         self._stream_reader = None
         self._stream_writer = None
+
+        self._logger.debug(
+            "VENDORED OWNSession init: type=%s, gateway=%s",
+            self._type,
+            self._gateway.address if self._gateway else None,
+        )
 
     @property
     def gateway(self) -> OWNGateway:
@@ -242,6 +239,7 @@ class OWNSession:
                         self._gateway.log_id,
                     )
                     return {"Success": False, "Message": "connection_refused"}
+
                 (
                     self._stream_reader,
                     self._stream_writer,
@@ -249,10 +247,11 @@ class OWNSession:
                     self._gateway.address, self._gateway.port
                 )
                 break
-            except ConnectionRefusedError:
+            except ConnectionRefusedError as exc:
                 self._logger.warning(
-                    "%s Test session connection refused, retrying in %ss.",
+                    "%s Test session connection refused (%r), retrying in %ss.",
                     self._gateway.log_id,
+                    exc,
                     retry_timer,
                 )
                 await asyncio.sleep(retry_timer)
@@ -262,19 +261,26 @@ class OWNSession:
         try:
             result = await self._negotiate()
             await self.close()
+            return result
         except ConnectionResetError as exc:
             self._logger.error(
-                "%s NEGOTIATE: ConnectionResetError in %s session: %r",
+                "%s NEGOTIATE: ConnectionResetError in %s session during test: %r",
                 self._gateway.log_id,
                 self._type,
                 exc,
             )
+            # restituiamo un dict, NON rilanciamo l’eccezione
             return {"Success": False, "Message": "password_retry"}
 
-        return result
-
     async def connect(self):
-        self._logger.debug("%s Opening %s session.", self._gateway.log_id, self._type)
+        """Open a session and run negotiation.
+
+        Returns:
+            dict: {"Success": bool, "Message": str} oppure {"Success": False, ...}
+        """
+        self._logger.debug(
+            "%s Opening %s session.", self._gateway.log_id, self._type
+        )
 
         retry_count = 0
         retry_timer = 1
@@ -287,32 +293,51 @@ class OWNSession:
                         self._gateway.log_id,
                         self._type.capitalize(),
                     )
-                    return None
+                    # ritorniamo un dict invece di None
+                    return {"Success": False, "Message": "connection_refused"}
+
                 (
                     self._stream_reader,
                     self._stream_writer,
                 ) = await asyncio.open_connection(
                     self._gateway.address, self._gateway.port
                 )
-                return await self._negotiate()
-            except (ConnectionRefusedError, asyncio.IncompleteReadError):
+
+                # Se la connect TCP è ok, facciamo la negoziazione
+                result = await self._negotiate()
+                return result
+
+            except (ConnectionRefusedError, asyncio.IncompleteReadError) as exc:
                 self._logger.warning(
-                    "%s %s session connection refused, retrying in %ss.",
+                    "%s %s session connection refused (%r), retrying in %ss.",
                     self._gateway.log_id,
                     self._type.capitalize(),
+                    exc,
                     retry_timer,
                 )
                 await asyncio.sleep(retry_timer)
                 retry_count += 1
                 retry_timer = retry_count * 2
-            except ConnectionResetError:
+
+            except ConnectionResetError as exc:
+                # prima si propagava l’eccezione, ora la gestiamo
                 self._logger.warning(
-                    "%s %s session connection reset, retrying in 60s.",
+                    "%s %s session connection reset by peer (%r), retrying in 60s.",
                     self._gateway.log_id,
                     self._type.capitalize(),
+                    exc,
                 )
                 await asyncio.sleep(60)
                 retry_count += 1
+
+            except Exception as exc:  # ultra-sicurezza
+                self._logger.exception(
+                    "%s %s session unexpected exception in connect(): %r",
+                    self._gateway.log_id,
+                    self._type.capitalize(),
+                    exc,
+                )
+                return {"Success": False, "Message": "cannot_connect"}
 
     async def close(self) -> None:
         """Closes the connection to the OpenWebNet gateway"""
@@ -331,7 +356,10 @@ class OWNSession:
         error_message = None
 
         self._logger.debug(
-            "%s Negotiating %s session.", self._gateway.log_id, self._type
+            "%s Negotiating %s session (type_id=%s).",
+            self._gateway.log_id,
+            self._type,
+            type_id,
         )
 
         self._stream_writer.write(f"*99*{type_id}##".encode())
@@ -748,4 +776,3 @@ class OWNCommandSession(OWNSession):
         except Exception:  # pylint: disable=broad-except
             self._logger.exception("%s Command session crashed.", self._gateway.log_id)
             return None
-
