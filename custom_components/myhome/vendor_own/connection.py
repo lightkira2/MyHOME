@@ -1,7 +1,5 @@
 """ This module handles TCP connections to the OpenWebNet gateway """
 
-from ..const import LOGGER
-
 import asyncio
 import hmac
 import hashlib
@@ -10,6 +8,12 @@ import random
 import logging
 from typing import Union
 from urllib.parse import urlparse
+
+# Proviamo a usare il logger dell'integrazione Home Assistant, se disponibile.
+try:
+    from ..const import LOGGER  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover
+    LOGGER = logging.getLogger(__name__)
 
 from .discovery import find_gateways, get_gateway, get_port
 from .message import OWNMessage, OWNSignaling
@@ -58,11 +62,6 @@ class OWNGateway:
         self.model_number = (
             discovery_info["modelNumber"] if "modelNumber" in discovery_info else None
         )
-        # self.presentationURL = (
-        #     discovery_info["presentationURL"]
-        #     if "presentationURL" in discovery_info
-        #     else None
-        # )
         self.serial_number = (
             discovery_info["serialNumber"] if "serialNumber" in discovery_info else None
         )
@@ -269,7 +268,7 @@ class OWNSession:
                 self._type,
                 exc,
             )
-            # restituiamo un dict, NON rilanciamo l’eccezione
+            # restituiamo un dict compatibile con config_flow
             return {"Success": False, "Message": "password_retry"}
 
     async def connect(self):
@@ -343,13 +342,11 @@ class OWNSession:
         """Closes the connection to the OpenWebNet gateway."""
 
         # Può essere chiamata anche dopo tentativi falliti di connect(),
-        # quindi writer/reader potrebbero essere in stato "sporco" o già chiusi.
+        # quindi writer/reader potrebbero essere già chiusi o in errore.
         if self._stream_writer is not None:
             try:
-                # Proviamo comunque a chiudere il writer
                 self._stream_writer.close()
-            except Exception as exc:
-                # Non deve mai far esplodere la chiusura
+            except Exception as exc:  # pragma: no cover
                 self._logger.debug(
                     "%s Error calling close() on stream_writer: %r",
                     self._gateway.log_id if self._gateway else "OWN",
@@ -357,7 +354,6 @@ class OWNSession:
                 )
 
             try:
-                # Alcuni reset arrivano qui: li ignoriamo
                 await self._stream_writer.wait_closed()
             except (ConnectionResetError, ConnectionError, OSError) as exc:
                 self._logger.debug(
@@ -366,7 +362,6 @@ class OWNSession:
                     exc,
                 )
 
-            # Pulizia riferimenti
             self._stream_writer = None
             self._stream_reader = None
 
