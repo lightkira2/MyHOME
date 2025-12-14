@@ -9,12 +9,7 @@ import logging
 from typing import Union
 from urllib.parse import urlparse
 
-# Proviamo a usare il logger dell'integrazione Home Assistant, se disponibile.
-try:
-    from ..const import LOGGER  # type: ignore[attr-defined]
-except Exception:  # pragma: no cover
-    LOGGER = logging.getLogger(__name__)
-
+from ..const import LOGGER
 from .discovery import find_gateways, get_gateway, get_port
 from .message import OWNMessage, OWNSignaling
 
@@ -172,29 +167,25 @@ class OWNSession:
         connection_type: str = "test",
         logger: logging.Logger = None,
     ):
-        """Initialize the class
+        """Initialize the class.
         Arguments:
-        gateway: OpenWebNet gateway instance
-        connection_type: used when logging to identify this session
-        logger: instance of logging
+            gateway: OpenWebNet gateway instance
+            connection_type: used when logging to identify this session
+            logger: instance of logging
         """
 
         self._gateway = gateway
         self._type = connection_type.lower()
-        # usa il logger dell'integrazione se non passato
+        # Usa il logger dell'integrazione se non passato
         self._logger = logger or LOGGER
 
         # annotations for stream reader/writer:
-        self._stream_reader: asyncio.StreamReader
-        self._stream_writer: asyncio.StreamWriter
-        # init them to None:
-        self._stream_reader = None
-        self._stream_writer = None
+        self._stream_reader: asyncio.StreamReader | None = None
+        self._stream_writer: asyncio.StreamWriter | None = None
 
+        gw_addr = self._gateway.address if self._gateway else None
         self._logger.debug(
-            "VENDORED OWNSession init: type=%s, gateway=%s",
-            self._type,
-            self._gateway.address if self._gateway else None,
+            "VENDORED OWNSession init: type=%s, gateway=%s", self._type, gw_addr
         )
 
     @property
@@ -268,14 +259,14 @@ class OWNSession:
                 self._type,
                 exc,
             )
-            # restituiamo un dict compatibile con config_flow
+            # restituiamo un dict, NON rilanciamo l’eccezione
             return {"Success": False, "Message": "password_retry"}
 
     async def connect(self):
         """Open a session and run negotiation.
 
         Returns:
-            dict: {"Success": bool, "Message": str} oppure {"Success": False, ...}
+            dict: {"Success": bool, "Message": str}
         """
         self._logger.debug(
             "%s Opening %s session.", self._gateway.log_id, self._type
@@ -292,7 +283,6 @@ class OWNSession:
                         self._gateway.log_id,
                         self._type.capitalize(),
                     )
-                    # ritorniamo un dict invece di None
                     return {"Success": False, "Message": "connection_refused"}
 
                 (
@@ -307,11 +297,14 @@ class OWNSession:
                 return result
 
             except (ConnectionRefusedError, asyncio.IncompleteReadError) as exc:
+                # IncompleteReadError può avere dentro i byte parziali ricevuti
+                partial = getattr(exc, "partial", b"")
                 self._logger.warning(
-                    "%s %s session connection refused (%r), retrying in %ss.",
+                    "%s %s session connection refused (%r, partial=%r), retrying in %ss.",
                     self._gateway.log_id,
                     self._type.capitalize(),
                     exc,
+                    partial,
                     retry_timer,
                 )
                 await asyncio.sleep(retry_timer)
@@ -319,7 +312,6 @@ class OWNSession:
                 retry_timer = retry_count * 2
 
             except ConnectionResetError as exc:
-                # prima si propagava l’eccezione, ora la gestiamo
                 self._logger.warning(
                     "%s %s session connection reset by peer (%r), retrying in 60s.",
                     self._gateway.log_id,
@@ -342,11 +334,13 @@ class OWNSession:
         """Closes the connection to the OpenWebNet gateway."""
 
         # Può essere chiamata anche dopo tentativi falliti di connect(),
-        # quindi writer/reader potrebbero essere già chiusi o in errore.
+        # quindi writer/reader potrebbero essere in stato "sporco" o già chiusi.
         if self._stream_writer is not None:
             try:
+                # Proviamo comunque a chiudere il writer
                 self._stream_writer.close()
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:
+                # Non deve mai far esplodere la chiusura
                 self._logger.debug(
                     "%s Error calling close() on stream_writer: %r",
                     self._gateway.log_id if self._gateway else "OWN",
@@ -354,6 +348,7 @@ class OWNSession:
                 )
 
             try:
+                # Alcuni reset arrivano qui: li ignoriamo
                 await self._stream_writer.wait_closed()
             except (ConnectionResetError, ConnectionError, OSError) as exc:
                 self._logger.debug(
@@ -362,6 +357,7 @@ class OWNSession:
                     exc,
                 )
 
+            # Pulizia riferimenti
             self._stream_writer = None
             self._stream_reader = None
 
@@ -373,6 +369,7 @@ class OWNSession:
             )
 
     async def _negotiate(self) -> dict:
+        """Perform OWN handshake and authentication."""
         type_id = 0 if self._type == "command" else 1
         error = False
         error_message = None
@@ -384,10 +381,15 @@ class OWNSession:
             type_id,
         )
 
-        self._stream_writer.write(f"*99*{type_id}##".encode())
+        # Start handshake
+        frame = f"*99*{type_id}##"
+        self._logger.debug("%s TX: %s", self._gateway.log_id, frame)
+        self._stream_writer.write(frame.encode())
         await self._stream_writer.drain()
 
+        # First response
         raw_response = await self._stream_reader.readuntil(OWNSession.SEPARATOR)
+        self._logger.debug("%s RX: %r", self._gateway.log_id, raw_response)
         resulting_message = OWNSignaling(raw_response.decode())
 
         if resulting_message.is_nack():
@@ -397,8 +399,11 @@ class OWNSession:
             error = True
             error_message = "connection_refused"
 
+        # Second response (or challenge)
         raw_response = await self._stream_reader.readuntil(OWNSession.SEPARATOR)
+        self._logger.debug("%s RX: %r", self._gateway.log_id, raw_response)
         resulting_message = OWNSignaling(raw_response.decode())
+
         if resulting_message.is_nack():
             error = True
             error_message = "negotiation_refused"
@@ -408,6 +413,7 @@ class OWNSession:
             self._logger.error(
                 "%s Error while opening %s session.", self._gateway.log_id, self._type
             )
+
         elif resulting_message.is_sha():
             self._logger.debug(
                 "%s Received SHA challenge: `%s`",
@@ -429,6 +435,7 @@ class OWNSession:
                     method = "sha1"
                 elif resulting_message.is_sha_256():
                     method = "sha256"
+
                 self._logger.debug(
                     "%s Accepting %s challenge, initiating handshake.",
                     self._gateway.log_id,
@@ -436,8 +443,13 @@ class OWNSession:
                 )
                 self._stream_writer.write("*#*1##".encode())
                 await self._stream_writer.drain()
-                raw_response = await self._stream_reader.readuntil(OWNSession.SEPARATOR)
+
+                raw_response = await self._stream_reader.readuntil(
+                    OWNSession.SEPARATOR
+                )
+                self._logger.debug("%s RX: %r", self._gateway.log_id, raw_response)
                 resulting_message = OWNSignaling(raw_response.decode())
+
                 if resulting_message.is_nonce():
                     server_random_string_ra = resulting_message.nonce
                     key = "".join(random.choices(string.digits, k=56))
@@ -458,12 +470,18 @@ class OWNSession:
                         self._gateway.log_id,
                         self._type,
                     )
+                    self._logger.debug(
+                        "%s TX: %s", self._gateway.log_id, hashed_password
+                    )
                     self._stream_writer.write(hashed_password.encode())
                     await self._stream_writer.drain()
                     try:
                         raw_response = await asyncio.wait_for(
                             self._stream_reader.readuntil(OWNSession.SEPARATOR),
                             timeout=5,
+                        )
+                        self._logger.debug(
+                            "%s RX: %r", self._gateway.log_id, raw_response
                         )
                         resulting_message = OWNSignaling(raw_response.decode())
                         if resulting_message.is_nack():
@@ -519,6 +537,7 @@ class OWNSession:
                             self._gateway.log_id,
                             self._type,
                         )
+
         elif resulting_message.is_nonce():
             self._logger.debug(
                 "%s Received nonce: `%s`", self._gateway.log_id, resulting_message
@@ -530,9 +549,15 @@ class OWNSession:
                 self._logger.debug(
                     "%s Sending %s session password.", self._gateway.log_id, self._type
                 )
+                self._logger.debug(
+                    "%s TX: %s", self._gateway.log_id, hashed_password
+                )
                 self._stream_writer.write(hashed_password.encode())
                 await self._stream_writer.drain()
-                raw_response = await self._stream_reader.readuntil(OWNSession.SEPARATOR)
+                raw_response = await self._stream_reader.readuntil(
+                    OWNSession.SEPARATOR
+                )
+                self._logger.debug("%s RX: %r", self._gateway.log_id, raw_response)
                 resulting_message = OWNSignaling(raw_response.decode())
                 if resulting_message.is_nack():
                     error = True
@@ -556,12 +581,14 @@ class OWNSession:
                     self._gateway.log_id,
                     self._type,
                 )
+
         elif resulting_message.is_ack():
             self._logger.debug(
                 "%s %s session established successfully.",
                 self._gateway.log_id,
                 self._type.capitalize(),
             )
+
         else:
             error = True
             error_message = "negotiation_failed"
