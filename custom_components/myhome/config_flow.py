@@ -19,7 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 
-from .own_wrapper import OWNGateway, OWNCommandSession, find_gateways
+from .own_wrapper import OWNGateway, OWNSession, find_gateways
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_TYPE,
@@ -110,10 +110,7 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             **{
                 gw["serialNumber"]: f"{gw['modelName']} Gateway ({gw['address']})"
                 for gw in local_gateways
-                if gw.get("serialNumber")
-                and dr.format_mac(gw["serialNumber"]) not in already_configured
             },
-            # Opzione "Custom"
             "00:00:00:00:00:00": "Custom",
         }
 
@@ -239,31 +236,26 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
         assert gateway is not None
 
         LOGGER.warning(
-            "CONFIG_FLOW: starting COMMAND test session to %s:%s (password set: %s)",
+            "CONFIG_FLOW: starting TEST session to %s:%s (password set: %s)",
             gateway.address,
             gateway.port,
             gateway.password is not None,
         )
 
-        # Usiamo una COMMAND session per il test (type_id=0)
-        test_session = OWNCommandSession(
-            gateway=gateway,
-            logger=LOGGER,
-        )
-
-        result = await test_session.connect()
-        await test_session.close()
+        # IMPORTANTISSIMO: usiamo ESATTAMENTE lo stesso codice
+        # che hai usato nel test sul tuo PC:
+        # OWNSession.test_gateway(gateway) → type="test" → *99*1##
+        result = await OWNSession.test_gateway(gateway)
 
         if result is None:
             LOGGER.error(
-                "CONFIG_FLOW: command session connect() returned None (connection refused or reset)."
+                "CONFIG_FLOW: test_gateway() returned None (connection refused or reset)."
             )
             return self.async_abort(reason="cannot_connect")
 
-        LOGGER.warning("CONFIG_FLOW: command test result: %s", result)
+        LOGGER.warning("CONFIG_FLOW: test result: %s", result)
 
-        if result.get("Success"):
-            # Connessione OK, creiamo l'entry
+        if result["Success"]:
             _new_entry_data = {
                 CONF_ID: dr.format_mac(gateway.serial),
                 CONF_HOST: gateway.address,
@@ -285,20 +277,13 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
                 data=_new_entry_data,
             )
 
-        # Gestione errori
-        message = result.get("Message")
-
         # Errori legati alla password
-        if message in ["password_required", "password_error", "password_retry"]:
-            errors["password"] = message
+        if result["Message"] in ["password_required", "password_error", "password_retry"]:
+            errors["password"] = result["Message"]
             return await self.async_step_password(errors=errors)
 
-        # Errori di connessione generici
-        if message in ["connection_refused", "cannot_connect", "negotiation_failed"]:
-            return self.async_abort(reason="cannot_connect")
-
-        # fallback: abort con il messaggio grezzo
-        return self.async_abort(reason=message)
+        # Altri motivi (negotiation_failed, connection_refused, ecc.)
+        return self.async_abort(reason=result["Message"])
 
 
 class MyhomeOptionsFlowHandler(OptionsFlow):
