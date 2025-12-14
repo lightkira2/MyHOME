@@ -19,7 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 
-from .own_wrapper import OWNGateway, OWNEventSession, find_gateways
+from .own_wrapper import OWNGateway, OWNCommandSession, find_gateways
 from .const import (
     CONF_ADDRESS,
     CONF_DEVICE_TYPE,
@@ -110,7 +110,10 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             **{
                 gw["serialNumber"]: f"{gw['modelName']} Gateway ({gw['address']})"
                 for gw in local_gateways
+                if gw.get("serialNumber")
+                and dr.format_mac(gw["serialNumber"]) not in already_configured
             },
+            # Opzione "Custom"
             "00:00:00:00:00:00": "Custom",
         }
 
@@ -236,32 +239,31 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
         assert gateway is not None
 
         LOGGER.warning(
-            "CONFIG_FLOW: starting EVENT test session to %s:%s (password set: %s)",
+            "CONFIG_FLOW: starting COMMAND test session to %s:%s (password set: %s)",
             gateway.address,
             gateway.port,
             gateway.password is not None,
         )
 
-        # Usiamo OWNEventSession (vendorizzato)
-        event_session = OWNEventSession(
+        # Usiamo una COMMAND session per il test (type_id=0)
+        test_session = OWNCommandSession(
             gateway=gateway,
             logger=LOGGER,
         )
 
-        # NOTA: connect() ora NON rilancia più ConnectionResetError,
-        # ma restituisce sempre un dict {"Success": bool, "Message": str}
-        result = await event_session.connect()
-        await event_session.close()
+        result = await test_session.connect()
+        await test_session.close()
 
         if result is None:
             LOGGER.error(
-                "CONFIG_FLOW: event session connect() returned None (connection refused or reset)."
+                "CONFIG_FLOW: command session connect() returned None (connection refused or reset)."
             )
             return self.async_abort(reason="cannot_connect")
 
-        LOGGER.warning("CONFIG_FLOW: event test result: %s", result)
+        LOGGER.warning("CONFIG_FLOW: command test result: %s", result)
 
-        if result["Success"]:
+        if result.get("Success"):
+            # Connessione OK, creiamo l'entry
             _new_entry_data = {
                 CONF_ID: dr.format_mac(gateway.serial),
                 CONF_HOST: gateway.address,
@@ -283,13 +285,20 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
                 data=_new_entry_data,
             )
 
+        # Gestione errori
+        message = result.get("Message")
+
         # Errori legati alla password
-        if result["Message"] in ["password_required", "password_error", "password_retry"]:
-            errors["password"] = result["Message"]
+        if message in ["password_required", "password_error", "password_retry"]:
+            errors["password"] = message
             return await self.async_step_password(errors=errors)
 
-        # Altri motivi (negotiation_failed, connection_refused, ecc.)
-        return self.async_abort(reason=result["Message"])
+        # Errori di connessione generici
+        if message in ["connection_refused", "cannot_connect", "negotiation_failed"]:
+            return self.async_abort(reason="cannot_connect")
+
+        # fallback: abort con il messaggio grezzo
+        return self.async_abort(reason=message)
 
 
 class MyhomeOptionsFlowHandler(OptionsFlow):
@@ -362,4 +371,3 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
-
