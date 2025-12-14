@@ -3,7 +3,7 @@
 import aiofiles
 import yaml
 
-from OWNd.message import OWNCommand, OWNGatewayCommand
+from .own_wrapper import OWNCommand, OWNGatewayCommand
 
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -300,4 +300,5 @@ async def async_unload_entry(hass, entry):
     del hass.data[DOMAIN][entry.data[CONF_MAC]]
 
     return await gateway_handler.close_listener()
+
 
