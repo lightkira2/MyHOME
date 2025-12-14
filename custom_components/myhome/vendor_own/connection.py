@@ -5,7 +5,7 @@ from ..const import LOGGER
 import asyncio
 import hmac
 import hashlib
-import stringdef
+import string
 import random
 import logging
 from typing import Union
@@ -803,4 +803,3 @@ class OWNCommandSession(OWNSession):
         except Exception:  # pylint: disable=broad-except
             self._logger.exception("%s Command session crashed.", self._gateway.log_id)
             return None
-
