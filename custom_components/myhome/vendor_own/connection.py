@@ -5,7 +5,7 @@ from ..const import LOGGER
 import asyncio
 import hmac
 import hashlib
-import string
+import stringdef
 import random
 import logging
 from typing import Union
@@ -340,14 +340,41 @@ class OWNSession:
                 return {"Success": False, "Message": "cannot_connect"}
 
     async def close(self) -> None:
-        """Closes the connection to the OpenWebNet gateway"""
+        """Closes the connection to the OpenWebNet gateway."""
 
+        # Può essere chiamata anche dopo tentativi falliti di connect(),
+        # quindi writer/reader potrebbero essere in stato "sporco" o già chiusi.
         if self._stream_writer is not None:
-            self._stream_writer.close()
-            await self._stream_writer.wait_closed()
+            try:
+                # Proviamo comunque a chiudere il writer
+                self._stream_writer.close()
+            except Exception as exc:
+                # Non deve mai far esplodere la chiusura
+                self._logger.debug(
+                    "%s Error calling close() on stream_writer: %r",
+                    self._gateway.log_id if self._gateway else "OWN",
+                    exc,
+                )
+
+            try:
+                # Alcuni reset arrivano qui: li ignoriamo
+                await self._stream_writer.wait_closed()
+            except (ConnectionResetError, ConnectionError, OSError) as exc:
+                self._logger.debug(
+                    "%s Error while waiting for writer to close: %r",
+                    self._gateway.log_id if self._gateway else "OWN",
+                    exc,
+                )
+
+            # Pulizia riferimenti
+            self._stream_writer = None
+            self._stream_reader = None
+
         if self._gateway is not None:
             self._logger.debug(
-                "%s %s session closed.", self._gateway.log_id, self._type.capitalize()
+                "%s %s session closed.",
+                self._gateway.log_id,
+                self._type.capitalize(),
             )
 
     async def _negotiate(self) -> dict:
@@ -776,3 +803,4 @@ class OWNCommandSession(OWNSession):
         except Exception:  # pylint: disable=broad-except
             self._logger.exception("%s Command session crashed.", self._gateway.log_id)
             return None
+
