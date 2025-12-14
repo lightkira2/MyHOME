@@ -242,21 +242,16 @@ class MyhomeFlowHandler(ConfigFlow, domain=DOMAIN):
             gateway.password is not None,
         )
 
-        # Usiamo OWNEventSession vendored, come base per il test
+        # Usiamo OWNEventSession (vendorizzato)
         event_session = OWNEventSession(
             gateway=gateway,
             logger=LOGGER,
         )
 
-        try:
-            result = await event_session.connect()
-            await event_session.close()
-        except Exception as exc:
-            LOGGER.error(
-                "CONFIG_FLOW: unexpected exception during event test connection: %r",
-                exc,
-            )
-            return self.async_abort(reason="cannot_connect")
+        # NOTA: connect() ora NON rilancia più ConnectionResetError,
+        # ma restituisce sempre un dict {"Success": bool, "Message": str}
+        result = await event_session.connect()
+        await event_session.close()
 
         if result is None:
             LOGGER.error(
@@ -367,3 +362,4 @@ class MyhomeOptionsFlowHandler(OptionsFlow):
             ),
             errors=errors,
         )
+
