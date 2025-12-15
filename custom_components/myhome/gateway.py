@@ -1,5 +1,4 @@
 """Code to handle a MyHome Gateway."""
-import inspect
 import asyncio
 from typing import Dict, List
 
@@ -47,7 +46,6 @@ from .own_wrapper import (
     OWNCommand,
 )
 
-
 from .const import (
     CONF_PLATFORMS,
     CONF_FIRMWARE,
@@ -74,18 +72,7 @@ from .button import (
 class MyHOMEGatewayHandler:
     """Manages a single MyHOME Gateway."""
 
-    def __init__(self, hass, config_entry, generate_events=False):
-        # DEBUG: path e versione di OWNd usata da HA
-        try:
-            from .const import LOGGER  # se non già visibile qui
-            LOGGER.warning(
-                "OWNd loaded from: %s, version: %s",
-                inspect.getfile(OWNd),
-                getattr(OWNd, "__version__", "unknown"),
-            )
-        except Exception as e:
-            LOGGER.error("Failed to inspect OWNd module: %s", e)
-            
+    def __init__(self, hass, config_entry, generate_events: bool = False):
         build_info = {
             "address": config_entry.data[CONF_HOST],
             "port": config_entry.data[CONF_PORT],
@@ -101,16 +88,21 @@ class MyHOMEGatewayHandler:
             "serialNumber": config_entry.data[CONF_MAC],
             "UDN": config_entry.data[CONF_UDN],
         }
+
         self.hass = hass
         self.config_entry = config_entry
         self.generate_events = generate_events
+
+        # Gateway OWNd (pip) tramite own_wrapper
         self.gateway = OWNGateway(build_info)
+
         self._terminate_listener = False
         self._terminate_sender = False
         self.is_connected = False
-        self.listening_worker: asyncio.tasks.Task = None
+
+        self.listening_worker: asyncio.tasks.Task | None = None
         self.sending_workers: List[asyncio.tasks.Task] = []
-        self.send_buffer = asyncio.Queue()
+        self.send_buffer: asyncio.Queue = asyncio.Queue()
 
     @property
     def mac(self) -> str:
@@ -141,28 +133,15 @@ class MyHOMEGatewayHandler:
         return self.gateway.firmware
 
     async def test(self) -> Dict:
+        """Esegue il test di connessione (usato dal config_flow)."""
         session = OWNSession(
             gateway=self.gateway,
-            logger=LOGGER
+            logger=LOGGER,
         )
         return await session.test_connection()
 
-
-        LOGGER.warning(
-            "%s TEST: starting command test session to %s:%s (password set: %s)",
-            self.log_id,
-            self.gateway.address,
-            self.gateway.port,
-            bool(self.gateway.password),
-        )
-
-        result = await session.test_connection()
-
-        LOGGER.warning("%s TEST: result: %s", self.log_id, result)
-
-        return result
-
     async def listening_loop(self):
+        """Loop che mantiene aperta la sessione EVENT e gestisce i messaggi in ingresso."""
         self._terminate_listener = False
 
         LOGGER.debug("%s Creating listening worker.", self.log_id)
@@ -186,19 +165,25 @@ class MyHOMEGatewayHandler:
                     self.hass.bus.async_fire("myhome_message_event", _event_content)
                 else:
                     self.hass.bus.async_fire(
-                        "myhome_message_event", {"gateway": str(self.gateway.host), "message": str(message)}
+                        "myhome_message_event",
+                        {"gateway": str(self.gateway.host), "message": str(message)},
                     )
 
             if not isinstance(message, OWNMessage):
                 LOGGER.warning("%s Data received is not a message: `%s`", self.log_id, message)
             elif isinstance(message, OWNEnergyEvent):
-                if SENSOR in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS] and message.entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR]:
+                if (
+                    SENSOR in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS]
+                    and message.entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR]
+                ):
                     for _entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES]:
                         if isinstance(
                             self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES][_entity],
                             MyHOMEEntity,
                         ):
-                            self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                            self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][SENSOR][message.entity][CONF_ENTITIES][_entity].handle_event(
+                                message
+                            )
                 else:
                     continue
             elif (
@@ -279,7 +264,9 @@ class MyHOMEGatewayHandler:
                                 self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][LIGHT][message.entity][CONF_ENTITIES][LIGHT],
                                 MyHOMEEntity,
                             ):
-                                await self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][LIGHT][message.entity][CONF_ENTITIES][LIGHT].async_update()
+                                await self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][LIGHT][message.entity][CONF_ENTITIES][
+                                    LIGHT
+                                ].async_update()
                         else:
                             for _platform in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS]:
                                 if _platform != BUTTON and message.entity in self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform]:
@@ -298,7 +285,9 @@ class MyHOMEGatewayHandler:
                                                 EnableCommandButtonEntity,
                                             )
                                         ):
-                                            self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES][_entity].handle_event(message)
+                                            self.hass.data[DOMAIN][self.mac][CONF_PLATFORMS][_platform][message.entity][CONF_ENTITIES][_entity].handle_event(
+                                                message
+                                            )
 
                 else:
                     LOGGER.debug("%s Ignoring translation message `%s`", self.log_id, message)
@@ -307,7 +296,6 @@ class MyHOMEGatewayHandler:
                 LOGGER.debug("%s Received heating command, sending query to zone %s", self.log_id, where)
                 await self.send_status_request(OWNHeatingCommand.status(where))
             elif isinstance(message, OWNCENPlusEvent):
-                event = None
                 if message.is_short_pressed:
                     event = CONF_SHORT_PRESS
                 elif message.is_held or message.is_still_held:
@@ -322,7 +310,6 @@ class MyHOMEGatewayHandler:
                 )
                 LOGGER.info("%s %s", self.log_id, message.human_readable_log)
             elif isinstance(message, OWNCENEvent):
-                event = None
                 if message.is_pressed:
                     event = CONF_SHORT_PRESS
                 elif message.is_released_after_short_press:
@@ -349,28 +336,49 @@ class MyHOMEGatewayHandler:
         self.listening_worker.cancel()
 
     async def sending_loop(self, worker_id: int):
+        """Loop che prende i messaggi dalla coda e li invia sulla sessione COMMAND."""
         self._terminate_sender = False
         LOGGER.debug("%s Creating sending worker %s", self.log_id, worker_id)
 
         _command_session = OWNCommandSession(
             gateway=self.gateway,
             logger=LOGGER,
-            password=self.gateway.password,
-            mac=self.gateway.serial
         )
-        await _command_session.connect()
+
+        try:
+            await _command_session.connect()
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.exception(
+                "%s Sending worker %s failed to connect command session: %r",
+                self.log_id,
+                worker_id,
+                exc,
+            )
+            return
 
         while not self._terminate_sender:
             task = await self.send_buffer.get()
             LOGGER.debug(
                 "%s Message `%s` was successfully unqueued by worker %s.",
-                self.name,
-                self.gateway.host,
+                self.log_id,
                 task["message"],
                 worker_id,
             )
-            await _command_session.send(message=task["message"], is_status_request=task["is_status_request"])
-            self.send_buffer.task_done()
+            try:
+                await _command_session.send(
+                    message=task["message"],
+                    is_status_request=task["is_status_request"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.exception(
+                    "%s Worker %s failed to send message `%s`: %r",
+                    self.log_id,
+                    worker_id,
+                    task["message"],
+                    exc,
+                )
+            finally:
+                self.send_buffer.task_done()
 
         await _command_session.close()
         LOGGER.debug("%s Destroying sending worker %s", self.log_id, worker_id)
