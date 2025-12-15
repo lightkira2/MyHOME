@@ -143,9 +143,7 @@ class MyHOMEGatewayHandler:
     async def test(self) -> Dict:
         session = OWNSession(
             gateway=self.gateway,
-            logger=LOGGER,
-            password=self.gateway.password,
-            mac=self.gateway.serial,
+            logger=LOGGER
         )
         return await session.test_connection()
 
