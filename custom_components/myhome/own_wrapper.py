@@ -1,16 +1,20 @@
-"""Local wrapper around OWNd library (pip) con fallback a vendor_own."""
+"""Local wrapper around OWNd (prefer pip package, fallback to vendored copy)."""
 
 from .const import LOGGER
 
-# Prima proviamo a usare OWNd installato come package pip
+# ============================================================
+# 1) PROVA A USARE OWNd INSTALLATO (site-packages)
+# ============================================================
+
 try:
-    from OWNd.connection import (
-        OWNGateway,
-        OWNSession,
-        OWNEventSession,
-        OWNCommandSession,
+    import OWNd  # type: ignore[import]
+    from OWNd.connection import (  # type: ignore[import]
+        OWNGateway as _BaseOWNGateway,
+        OWNSession as _BaseOWNSession,
+        OWNEventSession as _BaseOWNEventSession,
+        OWNCommandSession as _BaseOWNCommandSession,
     )
-    from OWNd.message import (
+    from OWNd.message import (  # type: ignore[import]
         OWNLightingEvent,
         OWNLightingCommand,
         OWNAutomationEvent,
@@ -50,18 +54,74 @@ try:
         OWNGatewayCommand,
         OWNCommand,
     )
-    from OWNd.discovery import find_gateways
+    from OWNd.discovery import find_gateways  # type: ignore[import]
 
     try:
-        from OWNd import __version__ as VERSION
-    except Exception:
-        VERSION = "unknown"
+        VERSION = getattr(OWNd, "__version__", "unknown (pip)")
+    except Exception:  # pragma: no cover
+        VERSION = "unknown (pip)"
 
     LOGGER.warning("OWNd (pip) via own_wrapper, version=%s", VERSION)
 
+    # ---- Wrapper / sottoclassi per aggiungere il logger di HA ----
+
+    class OWNGateway(_BaseOWNGateway):
+        """Alias diretto della OWNGateway di OWNd."""
+        pass
+
+    class OWNSession(_BaseOWNSession):
+        """Wrapper di OWNSession di OWNd che assicura un logger valido."""
+
+        def __init__(
+            self,
+            gateway: _BaseOWNGateway = None,
+            connection_type: str = "test",
+            logger=None,
+        ):
+            # Se non viene passato un logger, usiamo quello dell'integrazione
+            super().__init__(
+                gateway=gateway,
+                connection_type=connection_type,
+                logger=logger or LOGGER,
+            )
+
+        @classmethod
+        async def test_gateway(cls, gateway: _BaseOWNGateway) -> dict:
+            """Replica la logica originale ma usando *questa* classe."""
+            connection = cls(
+                gateway=gateway,
+                connection_type="test",
+                logger=LOGGER,
+            )
+            return await connection.test_connection()
+
+    class OWNEventSession(_BaseOWNEventSession):
+        """Wrapper di OWNEventSession che forza l'uso di un logger valido."""
+
+        def __init__(self, gateway: _BaseOWNGateway = None, logger=None):
+            super().__init__(
+                gateway=gateway,
+                logger=logger or LOGGER,
+            )
+
+    class OWNCommandSession(_BaseOWNCommandSession):
+        """Wrapper di OWNCommandSession che forza l'uso di un logger valido."""
+
+        def __init__(self, gateway: _BaseOWNGateway = None, logger=None):
+            super().__init__(
+                gateway=gateway,
+                logger=logger or LOGGER,
+            )
+
 except ImportError:
-    # Se per qualche motivo OWNd non è installato o non importabile,
-    # facciamo fallback al codice vendorizzato esistente.
+    # ============================================================
+    # 2) SE OWNd NON È INSTALLATO: USA LA COPIA VENDOR_OWN
+    # ============================================================
+
+    LOGGER.debug(
+        "OWNd wrapper: OWNd not found in site-packages, using vendored copy"
+    )
+
     from .vendor_own.connection import (
         OWNGateway,
         OWNSession,
@@ -108,11 +168,12 @@ except ImportError:
         OWNGatewayCommand,
         OWNCommand,
     )
+
     from .vendor_own.discovery import find_gateways
 
     try:
-        from .vendor_own import __version__ as VERSION
-    except Exception:
+        from .vendor_own import __version__ as VERSION  # type: ignore[attr-defined]
+    except Exception:  # pragma: no cover
         VERSION = "vendored"
 
-    LOGGER.warning("OWNd vendored via own_wrapper, version=%s", VERSION)
+    LOGGER.warning("OWNd via own_wrapper (vendored), version=%s", VERSION)
